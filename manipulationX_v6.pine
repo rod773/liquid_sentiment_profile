@@ -1,0 +1,715 @@
+//@version=6
+indicator('ManipulationX + Liquidity Sentiment', 'MX+LSP', true, max_bars_back = 5000, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
+
+//═══════════════════════════════════════════════════════════════════════════════
+// MANIPULATIONX SETTINGS
+//═══════════════════════════════════════════════════════════════════════════════
+mxGR  = 'ManipulationX'
+showFvg15 = input.bool(true, 'Show 15m FVG', group = mxGR)
+showFvg1h = input.bool(true, 'Show 1h FVG', group = mxGR)
+showFvg4h = input.bool(false, 'Show 4h FVG', group = mxGR)
+fvgMinTicks = input.int(8, 'Min FVG Gap (ticks)', minval = 1, maxval = 50, group = mxGR)
+fvgNyOnly = input.bool(true, 'FVG only during NY session', group = mxGR)
+showIFVG = input.bool(true, 'Show iFVGs', group = mxGR)
+showSmt = input.bool(true, 'Show SMT Divergence', group = mxGR)
+smtSymbol = input.symbol('BOLDUSD', 'BOLD Symbol', group = mxGR)
+showSweep = input.bool(true, 'Show Liquidity Sweeps', group = mxGR)
+sweepTicks = input.int(2, 'Sweep Threshold (ticks)', minval = 1, maxval = 20, group = mxGR)
+showDol = input.bool(true, 'Show DOL Levels', group = mxGR)
+dolMinTicks = input.int(16, 'Min DOL Swing (ticks)', minval = 4, maxval = 200, group = mxGR)
+dolNyOnly = input.bool(true, 'DOL only during NY session', group = mxGR)
+showKz = input.bool(true, 'Use Killzones', group = mxGR)
+showSessions = input.bool(true, 'Show Session Boxes', group = mxGR)
+asiaSess = input.session('0100-0900', 'Asia session', group = mxGR)
+asiaColor = input.color(color.yellow, 'Asia color', group = mxGR)
+sydSess = input.session('2300-0700', 'Sydney session', group = mxGR)
+sydColor = input.color(color.rgb(255, 69, 0), 'Sydney color', group = mxGR)
+lonSess = input.session('0900-1700', 'London session', group = mxGR)
+lonColor = input.color(color.blue, 'London color', group = mxGR)
+nySess = input.session('1500-2200', 'New York session', group = mxGR)
+nyColor = input.color(color.purple, 'New York color', group = mxGR)
+sessTransp = input.int(85, 'Session box transparency', group = mxGR)
+sessLineStyle = input.string('solid', 'Session line style', options = ['solid', 'dashed', 'dotted'], group = mxGR)
+sessTz = input.string('Europe/Madrid', 'Session timezone', options = ['America/New_York', 'Europe/London', 'Europe/Madrid', 'Asia/Tokyo'], group = mxGR)
+cFvgBull = input.color(color.new(#00ff88, 50), 'Bullish FVG', group = mxGR)
+cFvgBear = input.color(color.new(#ff4444, 50), 'Bearish FVG', group = mxGR)
+cSmtBull = input.color(#2196F3, 'Bullish SMT', group = mxGR)
+cSmtBear = input.color(#FF9800, 'Bearish SMT', group = mxGR)
+cDol = input.color(#9C27B0, 'DOL', group = mxGR)
+
+//═══════════════════════════════════════════════════════════════════════════════
+// MACD FORECAST SETTINGS
+//═══════════════════════════════════════════════════════════════════════════════
+mcGR = 'MACD'
+fast = input.int(12, 'Fast Length', minval = 2, group = mcGR)
+slow = input.int(26, 'Slow Length', minval = 2, group = mcGR)
+sigLen = input.int(9, 'Signal Length', minval = 2, group = mcGR)
+trend = input.string('MACD - Signal', 'Trend Determination', options = ['MACD', 'MACD - Signal'], group = mcGR)
+fcGR = 'Forecast'
+maxMemory = input.int(50, 'Maximum Memory', minval = 2, group = fcGR)
+fcast = input.int(100, 'Forecasting Length', minval = 1, group = fcGR)
+upPer = input(80, 'Top Percentile', group = fcGR)
+midPer = input(50, 'Average Percentage', group = fcGR)
+dnPer = input(20, 'Bottom Percentile', group = fcGR)
+stGR = 'Forecast Style'
+upLine = input(#3179f5, 'Line Color', inline = 'css', group = stGR)
+dnLine = input(#ff5d00, '', inline = 'css', group = stGR)
+upArea = input(color.new(#3179f5, 80), 'Areas', inline = 'areas', group = stGR)
+dnArea = input(color.new(#ff5d00, 80), '', inline = 'areas', group = stGR)
+signalArea = input(true, 'Signal Area', inline = 'signal', group = stGR)
+signalBull = input(color.new(#089981, 50), '', inline = 'signal', group = stGR)
+signalBear = input(color.new(#f23645, 50), '', inline = 'signal', group = stGR)
+
+//═══════════════════════════════════════════════════════════════════════════════
+// LIQUIDITY SENTIMENT PROFILE SETTINGS
+//═══════════════════════════════════════════════════════════════════════════════
+rpGR  = 'Liquidity Sentiment Profile'
+tfTP  = 'The indicator resolution is set by the input of the Anchor Period. If the Anchor Period is set to AUTO, then the increased resolution is determined by the following algorithm:\n\n' +
+          ' - for intraday resolutions up to 4 Hour, DAY (1D) is used\n - for intraday resolutions equal to 4 Hour, WEEK (1W) is used\n - for daily resolutions MONTH is used (1M)\n - for weekly resolution, 3-MONTH (3M) is used\n - for monthly resolution, 12-MONTH (12M) is used\n\n' +
+          'If the Anchor Period is set to Fixed Range then the period is defined in the \'Fixed Period\' option\n\n' +
+          'If the Anchor Period is set to Swing High or Swing Low then the length required to calculate Swing Levels is defined in the \'Swing Detection Length\' option\n\n' +
+          'Note : Difference between Session and Day\n - Day will take into account extended hours (if present on the chart), whereas\n - Session will assume only regular trading hours. Session is default value for AUTO Anchor Period'
+tfIN  = input.string('Fixed Range', 'Anchor Period', options=['Auto', 'Fixed Range', 'Swing High', 'Swing Low', 'Session', 'Day', 'Week', 'Month', 'Quarter', 'Year'], group = rpGR, tooltip = tfTP)
+tfOT  = tfIN == 'Session' or tfIN == 'Day' ? 'D' : tfIN == 'Week' ? 'W' : tfIN == 'Month' ? 'M' : tfIN == 'Quarter' ? '3M' : tfIN == 'Year' ? '12M' : timeframe.isintraday and timeframe.period != '240' ? 'D' : timeframe.period == '240' ? 'W' : timeframe.isdaily ? 'M' : timeframe.isweekly ? '3M' : '12M'
+drpTT = 'Applicable if the Anchor Period is set to \'Fixed Range\' then the period of the profile is defined with this option\n\npossible min value [10]'
+drpLN = input.int(360, 'Fixed Period', minval = 10, group = rpGR, tooltip = drpTT)
+ppTT  = 'Applicable if the Anchor Period is set to \'Swing High\' or \'Swing Low\' then the length required to detect the Swing Levels is defined with this option\n\npossible min value [1]'
+ppLen = input.int(47, "Swing Detection Length", minval = 1, group = rpGR, tooltip = ppTT)
+lpGR  = 'Liquidity Profile'
+vpTP  = 'In trading, liquidity refers to the availability of orders at specific price points in the market, allowing transactions to occur smoothly, and the profile displays total trading activity (common interest, both buying and selling trading activity) over a specified time period at specific price levels\n\n' +
+          ' - high volume node rows : high trading activity price levels - usually represents consolidation levels (value areas)\n' +
+          ' - average volume node rows : average trading activity price levels\n' +
+          ' - low volume node rows : low trading activity price levels - usually represents supply & demand levels or liquidity levels\n\n' +
+          'row lengths, indicates the amount of the traded activity' 
+vpSH  = input.bool(true, 'Liquidity Profile', group = lpGR, tooltip = vpTP)
+vpHVC = input.color(color.new(#ff9800, 11), 'High Traded Nodes', inline='VP1', group = lpGR)
+vpHVT = input.int(53, 'Threshold %' , minval = 47, maxval = 99 , step = 1,inline='VP1', group = lpGR, tooltip = 'possible values [47-99]') / 100
+vpAVC = input.color(color.new(#5d606b, 51), 'Average Traded Nodes', inline='VP3' , group = lpGR)
+vpLVC = input.color(color.new(#2962ff, 11), 'Low Traded Nodes ', inline='VP2', group = lpGR)
+vpLVT = input.int(27, 'Threshold %' , minval = 10, maxval = 47 , step = 1,inline='VP2', group = lpGR, tooltip = 'possible values [10-47]') / 100
+spGR  = 'Sentiment Profile'
+spTP  = 'displays the sentiment, the dominat party over a specified time period at the specific price levels\n\n' +
+          ' - bullish node rows : buying trading activity is higher\n'  +
+          ' - barish node rows : selling trading activity is higher\n\n' +
+          'row lengths, indicates the strength of the buyers/sellers at the specific price levels' 
+spSH  = input.bool(true, 'Sentiment Profile', group = spGR, tooltip = spTP)
+spBLC = input.color(color.new(#26a69a, 73), 'Bullish Nodes', inline='SP', group = spGR)
+spBRC = input.color(color.new(#ef5350, 73), 'Bearish Nodes', inline='SP', group = spGR)
+sdGR  = 'Buyside & Sellside Liquidity Zones'
+sdTP  = 'Typically refer to the resting orders in the market, such as limit orders, stop loss orders, and stop limit orders, which can be absorbed or targeted by banks or financial institutions. Those levels are also reffered as supply & demand levels in the market'
+sdSH  = input.bool(true, 'Buyside & Sellside Liquidity Zones', group = sdGR, tooltip = sdTP)
+sdTH  = input.int(13, 'Threshold %' , minval = 0, maxval = 31, group = sdGR, tooltip = 'possible threshold values [0-31]\n\nhigher values return wider areas') / 100
+sdCR  = input.color(color.new(#0094FF, 81), 'Buyside Liquidity Nodes', inline='low2', group = sdGR)
+sdCS  = input.color(color.new(#ec1313, 81), 'Sellside Liquidity Nodes', inline='low2', group = sdGR)
+othGR = 'Profile Other Settings'
+pcTP  = 'displays the changes of the price levels with the highest traded activity'
+rpPC  = input.bool(false, 'Level of Significance', inline='PoC', group = othGR, tooltip = pcTP)
+rpPCC = input.color(color.new(#ff0000, 1), '', inline='PoC', group = othGR)
+rpPCW = input.int(2, '', inline='PoC', group = othGR)
+rpPL  = input.bool(false, 'Price Levels, Color', inline='BBe', group = othGR)
+rpPLC = input.color(color.new(#00bcd4, 1), '', inline='BBe', group = othGR)
+rpLS  = input.string('Small', "Size", options=['Tiny', 'Small', 'Normal'], inline='BBe', group = othGR)
+rpS   = switch rpLS
+    'Tiny'   => size.tiny
+    'Small'  => size.small
+    'Normal' => size.normal
+rpNR  = input.int(123, 'Number of Rows' , minval = 10, maxval = 155 ,step = 5, group = othGR, tooltip = 'possible values [10-155]')
+rpW   = input.int(27, 'Profile Width %', minval = 10, maxval = 50, group = othGR, tooltip = 'possible values [10-50]') / 100
+drpHO = input.int(13, 'Horizontal Offset', minval = 0, maxval = 100 ,group = othGR, tooltip = 'plotting by default will be performed on rightmost, where\nhorizontal offset option is for further adjustments\npossible values [0-100]')
+rpBG  = input.bool(true, 'Range Background Fill', inline ='BG', group = othGR)
+rpBGC = input.color(color.new(#00bcd4, 95), '', inline ='BG', group = othGR)
+
+//═══════════════════════════════════════════════════════════════════════════════
+// SHARED USER DEFINED TYPES
+//═══════════════════════════════════════════════════════════════════════════════
+type bar
+    float o = open
+    float h = high
+    float l = low
+    float c = close
+    float v = volume
+    int   i = bar_index
+
+type pivotPoint
+    int    x
+    float  h
+    float  h1
+    float  l
+    float  l1
+
+type vector
+    array<float> id
+
+type holder
+    array<vector> id
+
+//═══════════════════════════════════════════════════════════════════════════════
+// SHARED VARIABLES
+//═══════════════════════════════════════════════════════════════════════════════
+bar b = bar.new()
+var pivotPoint pp = pivotPoint.new()
+bull  = b.c > b.o
+nzV   = nz(b.v)
+
+//═══════════════════════════════════════════════════════════════════════════════
+// SHARED FUNCTIONS
+//═══════════════════════════════════════════════════════════════════════════════
+f_drawLabelX(_x, _y, _text, _xloc, _yloc, _color, _style, _textcolor, _size, _textalign, _tooltip) =>
+    var lb = label.new(_x, _y, _text, _xloc, _yloc, _color, _style, _textcolor, _size, _textalign, _tooltip)
+    lb.set_xy(_x, _y)
+    lb.set_text(_text)
+    lb.set_tooltip(_tooltip)
+    lb.set_textcolor(_textcolor)
+
+//═══════════════════════════════════════════════════════════════════════════════
+// MANIPULATIONX — KILLZONES
+//═══════════════════════════════════════════════════════════════════════════════
+var inNy = false
+bool nyKz = false
+bool lonKz = false
+
+if showKz
+    nyKzSess = time(timeframe.period, nySess, sessTz)
+    nyKz := not na(nyKzSess)
+    nyStart = na(nyKzSess[1]) and not na(nyKzSess)
+    if nyStart
+        label.new(bar_index, high, ' NY Open ', color = nyColor, style = label.style_label_lower_left, textcolor = color.white, size = size.small)
+    
+    lonKzSess = time(timeframe.period, lonSess, sessTz)
+    lonKz := not na(lonKzSess)
+    
+    inNy := not na(nyKzSess)
+else
+    inNy := false
+    nyKz := false
+    lonKz := false
+
+//═══════════════════════════════════════════════════════════════════════════════
+// MANIPULATIONX — SESSION BOXES
+//═══════════════════════════════════════════════════════════════════════════════
+bool showSessBoxes = timeframe.in_seconds() < 14400
+
+sessLine = sessLineStyle == 'dashed' ? line.style_dashed : sessLineStyle == 'dotted' ? line.style_dotted : line.style_solid
+
+inSession(sess) =>
+    not na(time(timeframe.period, sess + ':1234567', sessTz))
+
+entered(cond) =>
+    cond and not cond[1]
+
+exited(cond) =>
+    not cond and cond[1]
+
+asiaIn = inSession(asiaSess)
+sydIn = inSession(sydSess)
+londonIn = inSession(lonSess)
+nySessIn = inSession(nySess)
+
+var float asiaH = na
+var float asiaL = na
+var int asiaStart = na
+var box asiaBox = na
+
+var float sydH = na
+var float sydL = na
+var int sydStart = na
+var box sydBox = na
+
+var float lonH = na
+var float lonL = na
+var int lonStart = na
+var box lonBox = na
+
+var float nyH = na
+var float nyL = na
+var int nyStart = na
+var box nyBox = na
+
+var float asiaFinalHi = na
+var float asiaFinalLo = na
+var float sydFinalHi = na
+var float sydFinalLo = na
+var float lonFinalHi = na
+var float lonFinalLo = na
+var float nyFinalHi = na
+var float nyFinalLo = na
+var float lastFinHi = na
+var float lastFinLo = na
+var bool lastFinHiHit = false
+var bool lastFinLoHit = false
+
+if showSessions and showSessBoxes
+    if entered(asiaIn)
+        asiaH := high
+        asiaL := low
+        asiaStart := bar_index
+        asiaBox := box.new(asiaStart, asiaH, bar_index, asiaL, xloc = xloc.bar_index, border_color = asiaColor, bgcolor = color.new(asiaColor, sessTransp))
+        line.new(bar_index, close, bar_index, close, xloc = xloc.bar_index, extend = extend.none, color = asiaColor, width = 1, style = sessLine)
+    if not na(asiaBox)
+        if asiaIn
+            asiaH := math.max(asiaH, high)
+            asiaL := math.min(asiaL, low)
+            box.set_top(asiaBox, asiaH)
+            box.set_bottom(asiaBox, asiaL)
+            box.set_right(asiaBox, bar_index)
+        if exited(asiaIn)
+            line.new(bar_index, close, bar_index, close, xloc = xloc.bar_index, extend = extend.none, color = asiaColor, width = 1, style = sessLine)
+            label.new(int(math.round((asiaStart + bar_index) / 2)), (asiaH + asiaL) / 2, 'ASIA', style = label.style_label_center, color = color.new(color.white, 100), textcolor = asiaColor, size = size.large)
+            asiaFinalHi := asiaH
+            asiaFinalLo := asiaL
+            lastFinHi := asiaH
+            lastFinLo := asiaL
+            lastFinHiHit := false
+            lastFinLoHit := false
+            asiaH := na
+            asiaL := na
+            asiaStart := na
+            asiaBox := na
+
+    if entered(sydIn)
+        sydH := high
+        sydL := low
+        sydStart := bar_index
+        sydBox := box.new(sydStart, sydH, bar_index, sydL, xloc = xloc.bar_index, border_color = sydColor, bgcolor = color.new(sydColor, sessTransp))
+        line.new(bar_index, close, bar_index, close, xloc = xloc.bar_index, extend = extend.none, color = sydColor, width = 1, style = sessLine)
+    if not na(sydBox)
+        if sydIn
+            sydH := math.max(sydH, high)
+            sydL := math.min(sydL, low)
+            box.set_top(sydBox, sydH)
+            box.set_bottom(sydBox, sydL)
+            box.set_right(sydBox, bar_index)
+        if exited(sydIn)
+            line.new(bar_index, close, bar_index, close, xloc = xloc.bar_index, extend = extend.none, color = sydColor, width = 1, style = sessLine)
+            label.new(int(math.round((sydStart + bar_index) / 2)), (sydH + sydL) / 2, 'SYDNEY', style = label.style_label_center, color = color.new(color.white, 100), textcolor = sydColor, size = size.large)
+            sydFinalHi := sydH
+            sydFinalLo := sydL
+            lastFinHi := sydH
+            lastFinLo := sydL
+            lastFinHiHit := false
+            lastFinLoHit := false
+            sydH := na
+            sydL := na
+            sydStart := na
+            sydBox := na
+
+    if entered(londonIn)
+        lonH := high
+        lonL := low
+        lonStart := bar_index
+        lonBox := box.new(lonStart, lonH, bar_index, lonL, xloc = xloc.bar_index, border_color = lonColor, bgcolor = color.new(lonColor, sessTransp))
+        line.new(bar_index, close, bar_index, close, xloc = xloc.bar_index, extend = extend.none, color = lonColor, width = 1, style = sessLine)
+    if not na(lonBox)
+        if londonIn
+            lonH := math.max(lonH, high)
+            lonL := math.min(lonL, low)
+            box.set_top(lonBox, lonH)
+            box.set_bottom(lonBox, lonL)
+            box.set_right(lonBox, bar_index)
+        if exited(londonIn)
+            line.new(bar_index, close, bar_index, close, xloc = xloc.bar_index, extend = extend.none, color = lonColor, width = 1, style = sessLine)
+            label.new(int(math.round((lonStart + bar_index) / 2)), (lonH + lonL) / 2, 'LONDON', style = label.style_label_center, color = color.new(color.white, 100), textcolor = lonColor, size = size.large)
+            lonFinalHi := lonH
+            lonFinalLo := lonL
+            lastFinHi := lonH
+            lastFinLo := lonL
+            lastFinHiHit := false
+            lastFinLoHit := false
+            lonH := na
+            lonL := na
+            lonStart := na
+            lonBox := na
+
+    if entered(nySessIn)
+        nyH := high
+        nyL := low
+        nyStart := bar_index
+        nyBox := box.new(nyStart, nyH, bar_index, nyL, xloc = xloc.bar_index, border_color = nyColor, bgcolor = color.new(nyColor, sessTransp))
+        line.new(bar_index, close, bar_index, close, xloc = xloc.bar_index, extend = extend.none, color = nyColor, width = 1, style = sessLine)
+    if not na(nyBox)
+        if nySessIn
+            nyH := math.max(nyH, high)
+            nyL := math.min(nyL, low)
+            box.set_top(nyBox, nyH)
+            box.set_bottom(nyBox, nyL)
+            box.set_right(nyBox, bar_index)
+        if exited(nySessIn)
+            line.new(bar_index, close, bar_index, close, xloc = xloc.bar_index, extend = extend.none, color = nyColor, width = 1, style = sessLine)
+            label.new(int(math.round((nyStart + bar_index) / 2)), (nyH + nyL) / 2, 'NEW YORK', style = label.style_label_center, color = color.new(color.white, 100), textcolor = nyColor, size = size.large)
+            nyFinalHi := nyH
+            nyFinalLo := nyL
+            lastFinHi := nyH
+            lastFinLo := nyL
+            lastFinHiHit := false
+            lastFinLoHit := false
+            nyH := na
+            nyL := na
+            nyStart := na
+            nyBox := na
+
+//═══════════════════════════════════════════════════════════════════════════════
+// MANIPULATIONX — HTF FVG
+//═══════════════════════════════════════════════════════════════════════════════
+fvgDraw(tf, cBull, cBear, lbl) =>
+    [h, l, h2, l2, t] = request.security(syminfo.tickerid, tf, [high, low, high[2], low[2], time])
+    bullFvg = l > h2
+    bearFvg = h < l2
+    fresh = ta.change(t) != 0
+    nyOk = not fvgNyOnly or inNy
+    if nyOk and bullFvg[1] and fresh and math.abs(l[1] - h2[1]) >= fvgMinTicks * syminfo.mintick
+        box.new(bar_index, l[1], bar_index + 40, h2[1], border_color = cBull, bgcolor = color.new(cBull, 80))
+        label.new(bar_index, (l[1] + h2[1]) / 2, lbl, color = color.new(cBull, 50), style = label.style_label_center, textcolor = color.white, size = size.tiny)
+    if nyOk and bearFvg[1] and fresh and math.abs(l2[1] - h[1]) >= fvgMinTicks * syminfo.mintick
+        box.new(bar_index, l2[1], bar_index + 40, h[1], border_color = cBear, bgcolor = color.new(cBear, 80))
+        label.new(bar_index, (l2[1] + h[1]) / 2, lbl, color = color.new(cBear, 50), style = label.style_label_center, textcolor = color.white, size = size.tiny)
+
+if showFvg15
+    fvgDraw('15', cFvgBull, cFvgBear, '15M')
+if showFvg1h
+    fvgDraw('60', cFvgBull, cFvgBear, '1H')
+if showFvg4h
+    fvgDraw('240', cFvgBull, cFvgBear, '4H')
+
+//═══════════════════════════════════════════════════════════════════════════════
+// MANIPULATIONX — IFVG (1m)
+//═══════════════════════════════════════════════════════════════════════════════
+var bIFVG = false
+var sIFVG = false
+
+if showIFVG
+    [_, _, mOp, mCl, mHi1, mLo1] = request.security(syminfo.tickerid, '1', [high, low, open, close, high[1], low[1]])
+    bIFVG := mCl < mOp and mCl < mLo1 and close > mHi1
+    sIFVG := mCl > mOp and mCl > mHi1 and close < mLo1
+    if bIFVG
+        label.new(bar_index, low, ' IFVG', color = color.new(#00E676, 20), style = label.style_label_up, textcolor = color.white, size = size.tiny)
+    if sIFVG
+        label.new(bar_index, high, ' IFVG', color = color.new(#FF1744, 20), style = label.style_label_down, textcolor = color.white, size = size.tiny)
+else
+    bIFVG := false
+    sIFVG := false
+
+//═══════════════════════════════════════════════════════════════════════════════
+// MANIPULATIONX — SMT DIVERGENCE
+//═══════════════════════════════════════════════════════════════════════════════
+var float pAudLo = na
+var int pAudLoBar = na
+var float pAudHi = na
+var int pAudHiBar = na
+var float pBoldLo = na
+var int pBoldLoBar = na
+var float pBoldHi = na
+var int pBoldHiBar = na
+var bSMT = false
+var sSMT = false
+
+audPl = ta.pivotlow(low, 2, 2)
+audPh = ta.pivothigh(high, 2, 2)
+boldPl = request.security(smtSymbol, timeframe.period, ta.pivotlow(low, 2, 2))
+boldPh = request.security(smtSymbol, timeframe.period, ta.pivothigh(high, 2, 2))
+
+if showSmt
+    bSMT := false
+    sSMT := false
+    
+    bLo = ta.valuewhen(not na(boldPl), boldPl, 0)
+    bLoBar = ta.valuewhen(not na(boldPl), bar_index, 0)
+    bHi = ta.valuewhen(not na(boldPh), boldPh, 0)
+    bHiBar = ta.valuewhen(not na(boldPh), bar_index, 0)
+    
+    if not na(audPl)
+        if not na(pAudLo) and not na(bLo) and audPl > pAudLo and bLo < pBoldLo
+            bSMT := true
+            line.new(pAudLoBar, pAudLo, bar_index, audPl, color = cSmtBull, width = 2)
+            label.new(bar_index, low, ' SMT', color = cSmtBull, style = label.style_label_up, textcolor = color.white, size = size.small)
+        pAudLo := audPl
+        pAudLoBar := bar_index
+        pBoldLo := bLo
+        pBoldLoBar := bLoBar
+    
+    if not na(audPh)
+        if not na(pAudHi) and not na(bHi) and audPh < pAudHi and bHi > pBoldHi
+            sSMT := true
+            line.new(pAudHiBar, pAudHi, bar_index, audPh, color = cSmtBear, width = 2)
+            label.new(bar_index, high, ' SMT', color = cSmtBear, style = label.style_label_down, textcolor = color.white, size = size.small)
+        pAudHi := audPh
+        pAudHiBar := bar_index
+        pBoldHi := bHi
+        pBoldHiBar := bHiBar
+else
+    bSMT := false
+    sSMT := false
+
+//═══════════════════════════════════════════════════════════════════════════════
+// MANIPULATIONX — LEVELS + LIQUIDITY SWEEPS
+//═══════════════════════════════════════════════════════════════════════════════
+swp = showSweep ? sweepTicks * syminfo.mintick : na
+bool asiaHiSweep = false
+bool asiaLoSweep = false
+bool lonHiSweep = false
+bool lonLoSweep = false
+[dHi, dLo] = request.security(syminfo.tickerid, 'D', [high[1], low[1]])
+var bool dHiHit = false
+var bool dLoHit = false
+var bool dNew = false
+var line dHiLine = na
+var line dLoLine = na
+dNew := barstate.isfirst or timeframe.change('1D')
+if dNew
+    dHiHit := false
+    dLoHit := false
+    line.delete(dHiLine)
+    line.delete(dLoLine)
+    if showSweep and not na(dHi)
+        dHiLine := line.new(bar_index[1], dHi, bar_index, dHi, color = color.new(#FFD600, 30), width = 1, extend = extend.right)
+        dLoLine := line.new(bar_index[1], dLo, bar_index, dLo, color = color.new(#FFD600, 30), width = 1, extend = extend.right)
+
+barHiSweep = false
+barLoSweep = false
+dHiSweep = showSweep and dNew and not dHiHit and high > dHi + swp and close < dHi
+dLoSweep = showSweep and dNew and not dLoHit and low < dLo - swp and close > dLo
+if dHiSweep
+    barHiSweep := true
+    dHiHit := true
+if dLoSweep
+    barLoSweep := true
+    dLoHit := true
+
+float sweepHiPrice = na
+float sweepLoPrice = na
+
+if showSweep
+    if not lastFinHiHit and not na(lastFinHi) and high > lastFinHi + swp and close < lastFinHi
+        lastFinHiHit := true
+        sweepHiPrice := lastFinHi
+    if not lastFinLoHit and not na(lastFinLo) and low < lastFinLo - swp and close > lastFinLo
+        lastFinLoHit := true
+        sweepLoPrice := lastFinLo
+
+if not na(sweepHiPrice)
+    label.new(bar_index, sweepHiPrice, ' SWEEP', color = color.new(#FF5252, 30), style = label.style_label_down, textcolor = color.white, size = size.tiny)
+if not na(sweepLoPrice)
+    label.new(bar_index, sweepLoPrice, ' SWEEP', color = color.new(#69F0AE, 30), style = label.style_label_up, textcolor = color.white, size = size.tiny)
+asiaHiSweep := barHiSweep or not na(sweepHiPrice)
+asiaLoSweep := barLoSweep or not na(sweepLoPrice)
+
+//═══════════════════════════════════════════════════════════════════════════════
+// MANIPULATIONX — DOL LEVELS
+//═══════════════════════════════════════════════════════════════════════════════
+dolPh = ta.pivothigh(high, 4, 4)
+dolPl = ta.pivotlow(low, 4, 4)
+if showDol and (not dolNyOnly or inNy)
+    dolMin = dolMinTicks * syminfo.mintick
+    var float lastDolHi = na
+    var float lastDolLo = na
+    var string dolLast = ''
+    if not na(dolPh) and (dolLast == '' or dolLast == 'low') and (na(lastDolLo) or dolPh - lastDolLo >= dolMin)
+        label.new(bar_index, high, 'DOL', color = cDol, style = label.style_label_down, textcolor = color.white, size = size.tiny)
+        lastDolHi := dolPh
+        dolLast := 'high'
+        dolLast
+    if not na(dolPl) and (dolLast == '' or dolLast == 'high') and (na(lastDolHi) or lastDolHi - dolPl >= dolMin)
+        label.new(bar_index, low, 'DOL', color = cDol, style = label.style_label_up, textcolor = color.white, size = size.tiny)
+        lastDolLo := dolPl
+        dolLast := 'low'
+        dolLast
+
+//═══════════════════════════════════════════════════════════════════════════════
+// MANIPULATIONX — CHECKLIST
+//═══════════════════════════════════════════════════════════════════════════════
+var label checklistLbl = na
+if barstate.islast and na(checklistLbl)
+    lbl = '1. NY session (15:00 Madrid)\n2. Mark out DOLs/FVGs\n3. Entry model (iFVG)\n4. SMT divergence (AUDUSD vs BOLD)'
+    checklistLbl := label.new(bar_index, high, lbl, color = color.new(#1a1a2e, 30), style = label.style_label_lower_left, textcolor = color.white, size = size.normal)
+
+//═══════════════════════════════════════════════════════════════════════════════
+// MANIPULATIONX — ALERTS
+//═══════════════════════════════════════════════════════════════════════════════
+alertcondition(bSMT, 'Bullish SMT')
+alertcondition(sSMT, 'Bearish SMT')
+alertcondition(bIFVG, 'Bullish IFVG')
+alertcondition(sIFVG, 'Bearish IFVG')
+alertcondition(asiaHiSweep or lonHiSweep, 'Bearish Sweep')
+alertcondition(asiaLoSweep or lonLoSweep, 'Bullish Sweep')
+
+//═══════════════════════════════════════════════════════════════════════════════
+// MACD FORECAST — METHODS
+//═══════════════════════════════════════════════════════════════════════════════
+n = bar_index
+
+method populate(holder get_holder, idx, init_price)=>
+    if get_holder.id.size() < idx+1
+        get_holder.id.push(vector.new(array.new<float>(0)))
+
+    get_holder.id.get(idx).id.unshift(close - init_price)
+    
+    if get_holder.id.get(idx).id.size() > maxMemory
+        get_holder.id.get(idx).id.pop()
+
+method forecast(holder get_holder, idx, init_price, upper_coords, mid_coords, lower_coords)=>
+    max_horizon = get_holder.id.size()
+
+    x = 0
+    for i = idx-1 to math.min(idx+fcast, max_horizon-1) by 1
+        get_vector = get_holder.id.get(i)
+        
+        upper = init_price + get_vector.id.percentile_linear_interpolation(upPer)
+        mid   = init_price + get_vector.id.percentile_linear_interpolation(midPer)
+        lower = init_price + get_vector.id.percentile_linear_interpolation(dnPer)
+
+        upper_coords.push(chart.point.from_index(n+x, upper))
+        mid_coords.push(chart.point.from_index(n+x, mid))
+        lower_coords.unshift(chart.point.from_index(n+x, lower))
+        x := x + 1
+
+//═══════════════════════════════════════════════════════════════════════════════
+// MACD FORECAST — CALCULATIONS
+//═══════════════════════════════════════════════════════════════════════════════
+var memory = map.new<int, holder>()
+var up_idx = 0
+var dn_idx = 0
+var uptrend_init_price = close
+var downtrend_init_price = close
+
+[macd, signal, _] = ta.macd(close, fast, slow, sigLen)
+
+if barstate.isfirst
+    memory.put(1, holder.new(array.new<vector>(0)))
+    memory.put(0, holder.new(array.new<vector>(0)))
+
+trigger = switch trend
+    'MACD' => ta.cross(macd, 0)
+    => ta.cross(macd, signal)
+
+uptrend = trend == 'MACD' ? macd > 0 : macd > signal
+downtrend = trend == 'MACD' ? macd < 0 : macd < signal
+
+uptrend_init_price := uptrend and not uptrend[1] ? close : uptrend_init_price
+downtrend_init_price := downtrend and not downtrend[1] ? close : downtrend_init_price
+init_value = uptrend ? uptrend_init_price : downtrend_init_price
+
+if uptrend
+    get_holder = memory.get(1)
+    get_holder.populate(up_idx, uptrend_init_price)
+
+if downtrend
+    get_holder = memory.get(0)
+    get_holder.populate(dn_idx, downtrend_init_price)
+
+up_idx := not uptrend ? 0 : up_idx + 1
+dn_idx := not downtrend ? 0 : dn_idx + 1
+
+if trigger
+    upper_coords = array.new<chart.point>(0)
+    mid_coords = array.new<chart.point>(0)
+    lower_coords = array.new<chart.point>(0)
+
+    if uptrend
+        get_holder = memory.get(1)
+        get_holder.forecast(up_idx, uptrend_init_price, upper_coords, mid_coords, lower_coords)
+    else
+        get_holder = memory.get(0)
+        get_holder.forecast(dn_idx, downtrend_init_price, upper_coords, mid_coords, lower_coords)
+    
+    polyline.delete(polyline.new(mid_coords, line_color = uptrend ? upLine : dnLine)[1])
+
+    polyline.delete(polyline.new(array.concat(upper_coords, lower_coords)
+      , line_color = na
+      , fill_color = uptrend ? upArea : dnArea)
+      [1])
+
+//═══════════════════════════════════════════════════════════════════════════════
+// MACD FORECAST — PLOTS
+//═══════════════════════════════════════════════════════════════════════════════
+init_plot = plot(init_value, "Reference Price", init_value != init_value[1] ? na : color.gray)
+price_plot = plot(close, editable = false, display = display.none)
+
+top_css = not signalArea ? na : uptrend ? signalBull : color.new(chart.bg_color, 100)
+btm_css = not signalArea ? na : uptrend ? color.new(chart.bg_color, 100) : signalBear
+
+fill(init_plot, price_plot,
+  top_value = math.max(close, uptrend ? uptrend_init_price : downtrend_init_price),
+  bottom_value = math.min(close, uptrend ? uptrend_init_price : downtrend_init_price),
+  top_color = top_css,
+  bottom_color = btm_css)
+
+//═══════════════════════════════════════════════════════════════════════════════
+// LIQUIDITY SENTIMENT PROFILE — CALCULATIONS
+//═══════════════════════════════════════════════════════════════════════════════
+rpVST = array.new_float(rpNR + 1, 0.)
+rpVSB = array.new_float(rpNR + 1, 0.)
+rpVSD = array.new_float(rpNR + 1, 0.)
+var dRP = array.new_box()
+var dPC = array.new_line()
+var int   x2   = 0
+var float pir  = na
+var int   pp_x = na
+var float pp_y = na
+
+pp_h = ta.pivothigh(ppLen, ppLen)
+pp_l = ta.pivotlow (ppLen, ppLen)
+if not na(pp_h) and tfIN == 'Swing High'
+    pp.h1 := pp.h
+    pp.h  := pp_h
+    pp_y  := pp_h
+    pp_x  := b.i
+if not na(pp_l) and tfIN == 'Swing Low'
+    pp.l1 := pp.l
+    pp.l  := pp_l
+    pp_y  := pp_l
+    pp_x  := b.i
+if tfOT == 'D' and tfIN == 'Day' ? dayofweek != dayofweek[1] : bool(ta.change(time(tfOT)))
+    x2 := b.i
+rpLN = tfIN == 'Fixed Range' ? drpLN : barstate.islast ? tfIN == 'Swing High' or tfIN == 'Swing Low' ? last_bar_index - pp_x + ppLen : last_bar_index - x2 : 1
+pHST = ta.highest(high, rpLN > 0 ? rpLN + 1 : 1)
+pLST = ta.lowest (low , rpLN > 0 ? rpLN + 1 : 1)
+pSTP = (pHST - pLST) / rpNR
+if barstate.islast and bool(nzV) and timeframe.period != tfOT and rpLN > 1 and pSTP > 0
+    if dRP.size() > 0
+        for i = 0 to dRP.size() - 1 by 1
+            box.delete(dRP.shift())
+    if dPC.size() > 0
+        for i = 0 to dPC.size() - 1 by 1
+            line.delete(dPC.shift())
+    for bI = rpLN to 0 by 1
+        lpCnt = 0
+        for pLL = pLST to pHST by pSTP
+            if (b[bI]).h >= pLL and (b[bI]).l < pLL + pSTP
+                rpVST.set(lpCnt, rpVST.get(lpCnt) + nzV[bI] * (((b[bI]).h - (b[bI]).l) == 0 ? 1 : pSTP / ((b[bI]).h - (b[bI]).l)) )
+                
+                if bull[bI]
+                    rpVSB.set(lpCnt, rpVSB.get(lpCnt) + nzV[bI] * (((b[bI]).h - (b[bI]).l) == 0 ? 1 : pSTP / ((b[bI]).h - (b[bI]).l)) )
+            lpCnt := lpCnt + 1
+        if rpPC
+            if bI == rpLN 
+                pir := pLST + (rpVST.indexof(rpVST.max()) + .50) * pSTP
+            else
+                dPC.push(line.new((b[bI]).i - 1, pir, (b[bI]).i, pLST + (rpVST.indexof(rpVST.max()) + .50) * pSTP, color = rpPCC, width = rpPCW))
+                pir := pLST + (rpVST.indexof(rpVST.max()) + .50) * pSTP
+    for lpCnt = 0 to rpNR - 1 by 1
+        bbp  = 2 * rpVSB.get(lpCnt) - rpVST.get(lpCnt)
+        rpVSD.set(lpCnt, rpVSD.get(lpCnt) + bbp * (bbp > 0 ? 1 : -1) )
+    if rpBG
+        dRP.push(box.new(b.i - rpLN, pLST, b.i, pHST, rpBGC, bgcolor = rpBGC ))
+    if rpPL
+        f_drawLabelX(b.i + drpHO + rpLN * rpW, pHST, str.tostring(pHST, format.mintick), xloc.bar_index, yloc.price, color(na), label.style_label_down, rpPLC, rpS, text.align_left, 'Profile High - ' + str.tostring(pHST, format.mintick) + '\n %' + str.tostring((pHST - pLST) / pLST * 100, '#.##') + ' higher than the Profile Low\n\nNumber of bars : ' + str.tostring(rpLN))
+        f_drawLabelX(b.i + drpHO + rpLN * rpW, pLST, str.tostring(pLST, format.mintick), xloc.bar_index, yloc.price, color(na), label.style_label_up  , rpPLC, rpS, text.align_left, 'Profile Low - '  + str.tostring(pLST, format.mintick) + '\n %' + str.tostring((pHST - pLST) / pHST * 100, '#.##') + ' lower than the Profile High\n\nNumber of bars : ' + str.tostring(rpLN))
+        if tfIN == 'Swing High'
+            swH = pp.h > pp.h1 ? "HH" : pp.h < pp.h1 ? "LH" : na
+            f_drawLabelX((b[rpLN]).i, pp.h, swH, xloc.bar_index, yloc.price, color(na), label.style_label_down, rpPLC, rpS, text.align_center, 'Swing High : ' + str.tostring(pp.h, format.mintick))
+        
+        if tfIN == 'Swing Low'
+            swL = pp.l < pp.l1 ? "LL" : pp.l > pp.l1 ? "HL" : na
+            f_drawLabelX((b[rpLN]).i, pp.l ,swL, xloc.bar_index, yloc.price, color(na), label.style_label_up  , rpPLC, rpS, text.align_center, 'Swing Low : '  + str.tostring(pp.l, format.mintick))
+    for lpCnt = 0 to rpNR - 1 by 1
+        if vpSH
+            sBI = b.i - int(rpVST.get(lpCnt) / rpVST.max() * rpLN * rpW) + rpLN * rpW + drpHO
+            eBI = b.i + drpHO + rpLN * rpW
+            llC = rpVST.get(lpCnt) / rpVST.max() > vpHVT ? color.from_gradient(rpVST.get(lpCnt) / rpVST.max(), vpHVT, 1, vpAVC, vpHVC) : color.from_gradient(rpVST.get(lpCnt) / rpVST.max(), 0, vpLVT, vpLVC, vpAVC)
+            dRP.push(box.new(sBI, pLST + (lpCnt + 0.1) * pSTP, eBI, pLST + (lpCnt + 0.9) * pSTP, color(na), bgcolor = llC ))
+        if spSH
+            bbp = 2 * rpVSB.get(lpCnt) - rpVST.get(lpCnt)
+            sBI = b.i + int( rpVSD.get(lpCnt) / rpVSD.max() * rpLN * rpW / 2) + rpLN * rpW + drpHO
+            eBI = b.i + drpHO + rpLN * rpW
+            dRP.push(box.new(sBI, pLST + (lpCnt + 0.1) * pSTP, eBI, pLST + (lpCnt + 0.9) * pSTP, bbp > 0 ? spBLC : spBRC, bgcolor = bbp > 0 ? spBLC : spBRC ))
+        if sdSH and rpVST.get(lpCnt) / rpVST.max() < sdTH
+            dRP.push(box.new(b.i - rpLN, pLST + (lpCnt + 0.) * pSTP, b.i, pLST + (lpCnt + 1.) * pSTP, color(na), bgcolor = pLST + (lpCnt + .5) * pSTP > pLST + (rpVST.indexof(rpVST.max()) + .5) * pSTP ? sdCR : sdCS))
